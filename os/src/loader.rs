@@ -69,6 +69,7 @@ pub fn load_apps() {
     }
     let num_app_ptr = _num_app as usize as *const usize;
     let num_app = get_num_app();
+    // link_app.S
     let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
     // clear i-cache first
     unsafe {
@@ -77,6 +78,7 @@ pub fn load_apps() {
     // load apps
     for i in 0..num_app {
         let base_i = get_base_i(i);
+        // magic
         // clear region
         (base_i..base_i + APP_SIZE_LIMIT)
             .for_each(|addr| unsafe { (addr as *mut u8).write_volatile(0) });
