@@ -14,6 +14,7 @@ pub fn handle_alloc_error(layout: core::alloc::Layout) -> ! {
 /// heap space ([u8; KERNEL_HEAP_SIZE])
 static mut HEAP_SPACE: [u8; KERNEL_HEAP_SIZE] = [0; KERNEL_HEAP_SIZE];
 /// initiate heap allocator
+/// 这里的作用是干嘛的？ 管理kernel heap 的？ 地址范围为： start kernel_heap, end kernel_heap
 pub fn init_heap() {
     unsafe {
         HEAP_ALLOCATOR

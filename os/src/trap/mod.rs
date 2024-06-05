@@ -17,7 +17,7 @@ mod context;
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT_BASE};
 use crate::syscall::syscall;
 use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, TASK_MANAGER,
 };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
@@ -40,6 +40,7 @@ fn set_kernel_trap_entry() {
     }
 }
 
+/// 没看到啥时候调用
 fn set_user_trap_entry() {
     unsafe {
         stvec::write(TRAMPOLINE as usize, TrapMode::Direct);
@@ -100,8 +101,10 @@ pub fn trap_handler() -> ! {
 /// set the new addr of __restore asm function in TRAMPOLINE page,
 /// set the reg a0 = trap_cx_ptr, reg a1 = phy addr of usr page table,
 /// finally, jump to new addr of __restore asm function
+/// ? 在asm! 代码中看着有点奇怪， 为啥jr 在前面， a0, a1 在后面呢
 pub fn trap_return() -> ! {
     set_user_trap_entry();
+    TASK_MANAGER.try_set_first_run_times();
     let trap_cx_ptr = TRAP_CONTEXT_BASE;
     let user_satp = current_user_token();
     extern "C" {

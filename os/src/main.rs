@@ -15,7 +15,7 @@
 //! We then call [`task::run_first_task()`] and for the first time go to
 //! userspace.
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 #![deny(warnings)]
 #![no_std]
 #![no_main]
@@ -96,6 +96,9 @@ fn kernel_log_info() {
 
 #[no_mangle]
 /// the rust entry-point of os
+/// 整体的思考：
+/// Trap Context: 保存了 app切入 trap_handler时的运行环境， 保存 app 的kernel（stack） sp， 以及 kernel的satp。 用于在切入_alltraps时，快速切换到kernel 的memory space，并在 app的kernel stack 上运行函数。 如果在kernel中发生 heap的内存分配呢？ 应该是在kernel的 memory 中分配，但是局部变量在 app kernel stack 上执行
+/// TaskContext: 用于在 app之间进行 switch 而保存的app env， 查看 switch 汇编函数，主要是进行了寄存器的保存，（不知道为什么相对于 _alltraps） 寄存器保存的特别少
 pub fn rust_main() -> ! {
     clear_bss();
     kernel_log_info();

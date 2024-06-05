@@ -1,10 +1,21 @@
 //! Types related to task management
+
 use super::TaskContext;
+use crate::config::MAX_SYSCALL_NUM;
 use crate::config::TRAP_CONTEXT_BASE;
+use crate::mm::MapArea;
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
+use crate::syscall::process::TaskInfo;
+use crate::timer;
 use crate::trap::{trap_handler, TrapContext};
+/// The task control block (TCB) of a task Info
+#[derive(Debug)]
+pub struct TaskControlInfo {
+    syscall_times: [u32; MAX_SYSCALL_NUM],
+    time: Option<usize>,
+}
 
 /// The task control block (TCB) of a task.
 pub struct TaskControlBlock {
@@ -28,6 +39,9 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// task_infos
+    pub task_info: TaskControlInfo,
 }
 
 impl TaskControlBlock {
@@ -40,6 +54,9 @@ impl TaskControlBlock {
         self.memory_set.token()
     }
     /// Based on the elf info in program, build the contents of task in a new address space
+    /// 1. MemorySet::from_elf 直接将将app装在到os中，对bss,text deng做了映射
+    /// 2. 分配对应的 trap context
+    /// 3. kernel stack 是 app进入到kernel环境前的状态保存的地方
     pub fn new(elf_data: &[u8], app_id: usize) -> Self {
         // memory_set with elf program headers/trampoline/trap context/user stack
         let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
@@ -49,6 +66,7 @@ impl TaskControlBlock {
             .ppn();
         let task_status = TaskStatus::Ready;
         // map a kernel-stack in kernel space
+        // top is bigger than bottom
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(app_id);
         KERNEL_SPACE.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
@@ -63,6 +81,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            task_info: TaskControlInfo::default(),
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -96,6 +115,45 @@ impl TaskControlBlock {
             None
         }
     }
+
+    pub fn get_task_info(&self) -> TaskInfo {
+        TaskInfo {
+            status: self.task_status,
+            syscall_times: self.task_info.syscall_times.clone(),
+            time: timer::get_time_ms() - self.task_info.time.unwrap_or(0),
+        }
+    }
+
+    /// mmap 分配的内存应该由 program管理，并且不在kernel中分配
+    pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
+        // 让 start end 对齐
+        let start_va: VirtAddr = start.into();
+        if !start_va.aligned() {
+            return -1;
+        }
+        if let Some(pem) = MapPermission::from(port) {
+            let (start_va, end_va) = VirtAddr::area_range(start, len);
+            let map_area = crate::mm::MapArea::new_for_mmap(start_va, end_va, pem);
+            if !self.memory_set.map_area_conflict(&map_area) {
+                self.memory_set.push(map_area, None);
+                return 0;
+            }
+            println!("start_va: {:?}, end_va: {:?}", start_va, end_va);
+        }
+
+        return -1;
+    }
+
+    ///
+    pub fn unmmap(&mut self, start: usize, len: usize) -> isize {
+        // 让 start end 对齐
+        let (start, end) = VirtAddr::area_range(start, len);
+        let mut map = MapArea::new_for_unmap(start, end);
+        if self.memory_set.unpush(&mut map) {
+            return 0;
+        }
+        return -1;
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -109,4 +167,24 @@ pub enum TaskStatus {
     Running,
     /// exited
     Exited,
+}
+impl TaskControlInfo {
+    pub fn incr_syscall_times(&mut self, syscall_id: usize) {
+        self.syscall_times[syscall_id] += 1;
+    }
+
+    pub fn try_set_first_run_times(&mut self) {
+        if self.time.is_none() {
+            self.time = Some(crate::timer::get_time_ms())
+        }
+    }
+}
+
+impl Default for TaskControlInfo {
+    fn default() -> Self {
+        TaskControlInfo {
+            syscall_times: [0; MAX_SYSCALL_NUM],
+            time: None,
+        }
+    }
 }

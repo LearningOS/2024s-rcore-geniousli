@@ -86,6 +86,7 @@ impl FrameAllocator for StackFrameAllocator {
     }
 }
 
+/// 这里设计模式算是什么？
 type FrameAllocatorImpl = StackFrameAllocator;
 
 lazy_static! {
@@ -94,6 +95,8 @@ lazy_static! {
         unsafe { UPSafeCell::new(FrameAllocatorImpl::new()) };
 }
 /// initiate the frame allocator using `ekernel` and `MEMORY_END`
+/// ekernel 的定义在： linker.ld文件中, 应该为 整个os 的 可分配空间
+/// 整个 物理内存的管理者, alloc 都最终调用  FRAME_ALLOCATOR
 pub fn init_frame_allocator() {
     extern "C" {
         fn ekernel();

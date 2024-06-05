@@ -30,6 +30,9 @@ extern "C" {
 
 lazy_static! {
     /// The kernel's initial memory mapping(kernel address space)
+    /// lazy_static 用的还真是多, 需要好好研究一下
+    /// kernel_space 与 Frame_alloctor 之间的关系是什么？
+    /// kernel_space 占据的空间范围是多少
     pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
 }
@@ -63,13 +66,31 @@ impl MemorySet {
             None,
         );
     }
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
+    pub fn hava_conflict(&self, map_area: MapArea) -> bool {
+        self.areas
+            .iter()
+            .find(|item| item.conflict(&map_area))
+            .is_some()
+    }
+
+    pub fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
         }
         self.areas.push(map_area);
     }
+
+    pub fn unpush(&mut self, map_area: &mut MapArea) -> bool {
+        if let Some(index) = self.areas.iter().position(|item| item == map_area) {
+            self.areas.remove(index);
+            map_area.unmap(&mut self.page_table);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Mention that trampoline is not collected by areas.
     fn map_trampoline(&mut self) {
         self.page_table.map(
@@ -79,6 +100,8 @@ impl MemorySet {
         );
     }
     /// Without kernel stacks.
+    /// kernel 的映射也是使用了MMU， 开始还以为 会在进入kernel的时候，关闭MMU(satp) 呢，结果 在kernel的时候，依然使用， 只不过对 .text, .data 等 使用了 直接映射 (即： ppn == vpn)
+    /// trampoline 是系统设计中 比较重要的 segment, 在os以及app中都 以同一个物理地址 映射到 同样的 虚拟地址中, 来保证 在 trap中的 进行 app 地址空间 切换到 os 地址空间 中时， 下一条pc指令能够正确
     pub fn new_kernel() -> Self {
         let mut memory_set = Self::new_bare();
         // map trampoline
@@ -262,8 +285,19 @@ impl MemorySet {
             false
         }
     }
+
+    /// whether have map conflict
+    pub fn map_area_conflict(&self, map_area: &MapArea) -> bool {
+        self.areas
+            .iter()
+            .find(|item| item.conflict(&map_area))
+            .is_some()
+    }
+
+    // pub fn have_vpn_range(&self, vpn_range: &VPNRange) -> bool {}
 }
 /// map area structure, controls a contiguous piece of virtual memory
+#[derive(Debug)]
 pub struct MapArea {
     vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
@@ -272,6 +306,26 @@ pub struct MapArea {
 }
 
 impl MapArea {
+    /// 检查 port permission
+    pub fn new_for_mmap(start_va: VirtPageNum, end_va: VirtPageNum, pem: MapPermission) -> Self {
+        MapArea {
+            vpn_range: VPNRange::new(start_va, end_va),
+            data_frames: BTreeMap::new(),
+            map_type: MapType::Framed,
+            map_perm: pem,
+        }
+    }
+
+    ///
+    pub fn new_for_unmap(start: VirtPageNum, end: VirtPageNum) -> Self {
+        MapArea {
+            vpn_range: VPNRange::new(start, end),
+            data_frames: BTreeMap::default(),
+            map_type: MapType::Framed,
+            map_perm: MapPermission::R,
+        }
+    }
+
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -356,7 +410,25 @@ impl MapArea {
             current_vpn.step();
         }
     }
+
+    pub fn conflict(&self, map_area: &Self) -> bool {
+        if self.vpn_range.get_start() >= map_area.vpn_range.get_end()
+            || self.vpn_range.get_end() <= map_area.vpn_range.get_start()
+        {
+            false
+        } else {
+            true
+        }
+    }
 }
+impl PartialEq<MapArea> for MapArea {
+    fn eq(&self, other: &MapArea) -> bool {
+        self.vpn_range.get_start() == other.vpn_range.get_start()
+            && self.vpn_range.get_end() == other.vpn_range.get_end()
+    }
+}
+
+impl Eq for MapArea {}
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 /// map type for memory set: identical or framed
@@ -376,6 +448,28 @@ bitflags! {
         const X = 1 << 3;
         ///Accessible in U mode
         const U = 1 << 4;
+    }
+}
+
+impl MapPermission {
+    pub fn from(value: usize) -> Option<Self> {
+        if value & !0x7 != 0 {
+            return None;
+        }
+        if value & 0x7 == 0 {
+            return None;
+        }
+        let mut res = None;
+        if value & 0x1 != 0 {
+            res = res.map_or(Some(MapPermission::R), |item| Some(item | MapPermission::R));
+        }
+        if value & 0x2 != 0 {
+            res = res.map_or(Some(MapPermission::W), |item| Some(item | MapPermission::W));
+        }
+        if value & 0x4 != 0 {
+            res = res.map_or(Some(MapPermission::X), |item| Some(item | MapPermission::X));
+        }
+        return res;
     }
 }
 

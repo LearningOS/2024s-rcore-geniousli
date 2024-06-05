@@ -16,6 +16,7 @@ mod task;
 
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::syscall::process::TaskInfo;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -50,6 +51,7 @@ struct TaskManagerInner {
 
 lazy_static! {
     /// a `TaskManager` global instance through lazy_static!
+    ///
     pub static ref TASK_MANAGER: TaskManager = {
         println!("init TASK_MANAGER");
         let num_app = get_num_app();
@@ -135,6 +137,7 @@ impl TaskManager {
 
     /// Switch current `Running` task to the task we have found,
     /// or there is no `Ready` task and we can exit with all applications completed
+    /// ? 在 执行 __switch 函数的时候， ra 寄存器的数值应该是什么呢？ __switch 的函数调用，应该也是 jal 等命令吧， 所以 ra 应该为 下一条指令的 pc地址，空
     fn run_next_task(&self) {
         if let Some(next) = self.find_next_task() {
             let mut inner = self.inner.exclusive_access();
@@ -152,6 +155,42 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// add system call times
+    pub fn incr_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let curr = inner.current_task;
+        inner.tasks[curr].task_info.incr_syscall_times(syscall_id);
+    }
+
+    /// set first run time
+    pub fn try_set_first_run_times(&self) {
+        let mut inner = self.inner.exclusive_access();
+        let curr = inner.current_task;
+        inner.tasks[curr].task_info.try_set_first_run_times();
+    }
+
+    /// set first run time
+    pub fn get_curr_task_info(&self, info: &mut TaskInfo) {
+        let inner = self.inner.exclusive_access();
+        let curr = inner.current_task;
+        *info = inner.tasks[curr].get_task_info();
+    }
+
+
+    /// mmap for current program
+    pub fn mmap_for_curr_program(&self, start:  usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let curr = inner.current_task;
+        inner.tasks[curr].mmap(start, len, port)
+    }
+
+    /// unmmap for current program
+    pub fn unmmap_for_curr_program(&self, start:  usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let curr = inner.current_task;
+        inner.tasks[curr].unmmap(start, len)
     }
 }
 
@@ -201,4 +240,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// delegate to TASK_MANAGER
+pub fn incr_syscall_times(call_id: usize) {
+    TASK_MANAGER.incr_syscall_times(call_id)
+}
+
+///
+pub fn get_task_info(info: &mut crate::syscall::process::TaskInfo) {
+    TASK_MANAGER.get_curr_task_info(info)
+}
+
+/// mmap for current task
+pub fn mmap_for_program(start: usize, len: usize, port: usize) -> isize{
+    TASK_MANAGER.mmap_for_curr_program(start, len, port)
+}
+
+/// unmmap for current task
+pub fn unmmap_for_program(start: usize, len: usize) -> isize {
+    TASK_MANAGER.unmmap_for_curr_program(start, len)
 }

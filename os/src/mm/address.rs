@@ -113,7 +113,17 @@ impl VirtAddr {
     pub fn aligned(&self) -> bool {
         self.page_offset() == 0
     }
+
+    /// new_area
+    pub fn area_range(start: usize, len: usize) -> (VirtPageNum, VirtPageNum) {
+        let s: VirtAddr = start.into();
+        let off = if len % PAGE_SIZE == 0 { 0 } else { 1 };
+        let off = len / PAGE_SIZE + off;
+        let s = if s.aligned() { s.floor() } else { s.ceil() };
+        (s, s.add_offset(off))
+    }
 }
+
 impl From<VirtAddr> for VirtPageNum {
     fn from(v: VirtAddr) -> Self {
         assert_eq!(v.page_offset(), 0);
@@ -165,6 +175,11 @@ impl VirtPageNum {
             vpn >>= 9;
         }
         idx
+    }
+
+    ///
+    pub fn add_offset(&self, off: usize) -> VirtPageNum {
+        VirtPageNum(self.0 + off)
     }
 }
 
@@ -271,3 +286,15 @@ where
 }
 /// a simple range structure for virtual page number
 pub type VPNRange = SimpleRange<VirtPageNum>;
+
+impl<T> Debug for SimpleRange<T>
+where
+    T: StepByOne + Copy + PartialEq + PartialOrd + Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SimpleRange")
+            .field("l", &self.l)
+            .field("r", &self.r)
+            .finish()
+    }
+}
