@@ -12,7 +12,7 @@
 __alltraps:
     csrrw sp, sscratch, sp
     # now sp->kernel stack, sscratch->user stack
-    # allocate a TrapContext on kernel stack
+    # allocate a TrapContext on kernel stack, save user's status to kernel stack TrapContext
     addi sp, sp, -34*8
     # save general-purpose registers
     sd x1, 1*8(sp)
@@ -29,9 +29,9 @@ __alltraps:
     csrr t0, sstatus
     csrr t1, sepc
     sd t0, 32*8(sp)
-    sd t1, 33*8(sp)
+    sd t1, 33*8(sp) // update TrapContenxt spec,
     # read user stack from sscratch and save it on the kernel stack
-    csrr t2, sscratch
+    csrr t2, sscratch // user_stack x[2]
     sd t2, 2*8(sp)
     # set input argument of trap_handler(cx: &mut TrapContext)
     mv a0, sp
@@ -39,13 +39,13 @@ __alltraps:
 
 __restore:
     # now sp->kernel stack(after allocated), sscratch->user stack
-    # restore sstatus/sepc
+    # restore sstatus/sepc, sp -> TrapContext
     ld t0, 32*8(sp)
     ld t1, 33*8(sp)
-    ld t2, 2*8(sp)
+    ld t2, 2*8(sp) // stack pointer
     csrw sstatus, t0
-    csrw sepc, t1
-    csrw sscratch, t2
+    csrw sepc, t1 // bss
+    csrw sscratch, t2 // stack pointer
     # restore general-purpuse registers except sp/tp
     ld x1, 1*8(sp)
     ld x3, 3*8(sp)
@@ -54,7 +54,7 @@ __restore:
         LOAD_GP %n
         .set n, n+1
     .endr
-    # release TrapContext on kernel stack
+    # release TrapContext on kernel stack ? 这里为什么需要release 呢？ sp 指向的是一个 Struct， 不是作用stack用的
     addi sp, sp, 34*8
     # now sp->kernel stack, sscratch->user stack
     csrrw sp, sscratch, sp

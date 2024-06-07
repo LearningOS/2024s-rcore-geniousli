@@ -21,10 +21,12 @@ struct UserStack {
     data: [u8; USER_STACK_SIZE],
 }
 
+/// 管理 TrapContext的 位置
 static KERNEL_STACK: [KernelStack; MAX_APP_NUM] = [KernelStack {
     data: [0; KERNEL_STACK_SIZE],
 }; MAX_APP_NUM];
 
+/// app de stack sp 的位置
 static USER_STACK: [UserStack; MAX_APP_NUM] = [UserStack {
     data: [0; USER_STACK_SIZE],
 }; MAX_APP_NUM];
@@ -69,13 +71,15 @@ pub fn load_apps() {
     }
     let num_app_ptr = _num_app as usize as *const usize;
     let num_app = get_num_app();
-    // link_app.S
+    // link_app.S, 汇编代码 bss位置
     let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
     // clear i-cache first
+    debug!("app_start: {:?}", app_start);
     unsafe {
         asm!("fence.i");
     }
-    // load apps
+    // load apps, 将 app代码 copy到 目标地址， 从 os镜像 copy 到 实际app的运行地址,
+    // APP_BASE_ADDRESS: get_base_i(i ) ... APP_SIZE_LIMIT
     for i in 0..num_app {
         let base_i = get_base_i(i);
         // magic

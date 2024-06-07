@@ -14,7 +14,7 @@ __switch:
     # )
     # save kernel stack of current task
     sd sp, 8(a0)
-    # save ra & s0~s11 of current execution
+    # save ra & s0~s11 of current execution, use for ret, ret will set pc = ra
     sd ra, 0(a0)
     .set n, 0
     .rept 12
