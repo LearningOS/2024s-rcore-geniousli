@@ -1,15 +1,17 @@
 //! Types related to task management
 
 use super::TaskContext;
+use crate::config;
 use crate::config::MAX_SYSCALL_NUM;
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::MapArea;
 use crate::mm::{
-    kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
+    kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VPNRange, VirtAddr, KERNEL_SPACE,
 };
 use crate::syscall::process::TaskInfo;
 use crate::timer;
 use crate::trap::{trap_handler, TrapContext};
+
 /// The task control block (TCB) of a task Info
 #[derive(Debug)]
 pub struct TaskControlInfo {
@@ -126,19 +128,19 @@ impl TaskControlBlock {
 
     /// mmap 分配的内存应该由 program管理，并且不在kernel中分配
     pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
-        // 让 start end 对齐
         let start_va: VirtAddr = start.into();
-        if !start_va.aligned() {
+        if !start_va.aligned() || start <= config::MAXVA - len {
             return -1;
         }
-        if let Some(pem) = MapPermission::from(port) {
+        if let Some(pem) = MapPermission::convert_for_user(port) {
+            // let start_va = VirtAddr::from(start).floor();
+            // let end_va = VirtAddr::from(start + len).ceil();
             let (start_va, end_va) = VirtAddr::area_range(start, len);
             let map_area = crate::mm::MapArea::new_for_mmap(start_va, end_va, pem);
             if !self.memory_set.map_area_conflict(&map_area) {
                 self.memory_set.push(map_area, None);
                 return 0;
             }
-            println!("start_va: {:?}, end_va: {:?}", start_va, end_va);
         }
 
         return -1;

@@ -172,10 +172,10 @@ impl TaskManager {
     }
 
     /// set first run time
-    pub fn get_curr_task_info(&self, info: &mut TaskInfo) {
+    pub fn get_curr_task_info(&self) -> TaskInfo {
         let inner = self.inner.exclusive_access();
         let curr = inner.current_task;
-        *info = inner.tasks[curr].get_task_info();
+        inner.tasks[curr].get_task_info()
     }
 
 
@@ -248,8 +248,8 @@ pub fn incr_syscall_times(call_id: usize) {
 }
 
 ///
-pub fn get_task_info(info: &mut crate::syscall::process::TaskInfo) {
-    TASK_MANAGER.get_curr_task_info(info)
+pub fn get_task_info() -> TaskInfo {
+    TASK_MANAGER.get_curr_task_info()
 }
 
 /// mmap for current task

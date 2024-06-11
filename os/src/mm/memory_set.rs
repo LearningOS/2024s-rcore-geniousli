@@ -452,7 +452,7 @@ bitflags! {
 }
 
 impl MapPermission {
-    pub fn from(value: usize) -> Option<Self> {
+    pub fn convert_for_user(value: usize) -> Option<Self> {
         if value & !0x7 != 0 {
             return None;
         }
@@ -469,7 +469,8 @@ impl MapPermission {
         if value & 0x4 != 0 {
             res = res.map_or(Some(MapPermission::X), |item| Some(item | MapPermission::X));
         }
-        return res;
+
+        return res.map_or(None, |item| Some(item | MapPermission::U));
     }
 }
 

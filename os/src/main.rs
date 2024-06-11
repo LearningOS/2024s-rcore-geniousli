@@ -16,11 +16,14 @@
 //! userspace.
 
 // #![deny(missing_docs)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![no_std]
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+
+
+use crate::mm::MapPermission;
 
 #[macro_use]
 extern crate bitflags;
@@ -109,5 +112,6 @@ pub fn rust_main() -> ! {
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
     task::run_first_task();
+
     panic!("Unreachable in rust_main!");
 }
