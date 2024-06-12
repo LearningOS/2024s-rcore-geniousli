@@ -128,11 +128,13 @@ impl TaskControlBlock {
 
     /// mmap 分配的内存应该由 program管理，并且不在kernel中分配
     pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
+        // println!("start: {}, len: {}, port: {}", start, len, port);
         let start_va: VirtAddr = start.into();
-        if !start_va.aligned() || start <= config::MAXVA - len {
+        if !start_va.aligned() || start >= config::MAXVA - len {
             return -1;
         }
         if let Some(pem) = MapPermission::convert_for_user(port) {
+            // println!("pem is ------{:?}", pem);
             // let start_va = VirtAddr::from(start).floor();
             // let end_va = VirtAddr::from(start + len).ceil();
             let (start_va, end_va) = VirtAddr::area_range(start, len);
