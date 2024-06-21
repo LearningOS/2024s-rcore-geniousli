@@ -94,6 +94,16 @@ impl From<VirtPageNum> for usize {
 }
 /// virtual address impl
 impl VirtAddr {
+    /// new_area
+    pub fn area_range(start: usize, len: usize) -> (VirtPageNum, VirtPageNum) {
+        let s: VirtAddr = start.into();
+        let off = if len % PAGE_SIZE == 0 { 0 } else { 1 };
+        let off = len / PAGE_SIZE + off;
+        let s = if s.aligned() { s.floor() } else { s.ceil() };
+        (s, s.add_offset(off))
+    }
+
+
     /// Get the (floor) virtual page number
     pub fn floor(&self) -> VirtPageNum {
         VirtPageNum(self.0 / PAGE_SIZE)
@@ -156,6 +166,11 @@ impl From<PhysPageNum> for PhysAddr {
 }
 
 impl VirtPageNum {
+    ///
+    pub fn add_offset(&self, off: usize) -> VirtPageNum {
+        VirtPageNum(self.0 + off)
+    }
+
     /// Get the indexes of the page table entry
     pub fn indexes(&self) -> [usize; 3] {
         let mut vpn = self.0;

@@ -1,5 +1,6 @@
 //! Process management syscalls
 use alloc::sync::Arc;
+use crate::mm::translated_byte_buffer;
 
 use crate::{
     config::MAX_SYSCALL_NUM,
@@ -22,11 +23,11 @@ pub struct TimeVal {
 #[allow(dead_code)]
 pub struct TaskInfo {
     /// Task status in it's life cycle
-    status: TaskStatus,
+    pub status: TaskStatus,
     /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM],
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
     /// Total running time of task
-    time: usize,
+    pub time: usize,
 }
 
 /// task exits and submit an exit code
@@ -124,41 +125,74 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_get_time(its: *mut TimeVal, _tz: usize) -> isize {
+    let us = crate::timer::get_time_us();
+    if let Some(curr) = current_task() {
+        let token = curr.get_user_token();
+        let phy_dest = translated_byte_buffer(token, its as *const u8, core::mem::size_of::<TimeVal>());
+        let src = TimeVal {
+            sec: us / 1_000_000,
+            usec: us % 1_000_000,
+        };
+        let src_ptr = &src as *const TimeVal;
+
+        for (idx, dst) in phy_dest.into_iter().enumerate() {
+            let len = dst.len();
+            unsafe {
+                dst.copy_from_slice(core::slice::from_raw_parts(
+                    src_ptr.wrapping_byte_add(idx * len) as *const u8,
+                    len,
+                ));
+            }
+        }
+        0
+    }else {
+        -1
+    }
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_task_info(iti: *mut TaskInfo) -> isize {
+    if let Some(task) = current_task() {
+        let src = task.get_task_info();
+        let token = task.get_user_token();
+        let phy_dest =
+            translated_byte_buffer(token, iti as *const u8, core::mem::size_of::<TaskInfo>());
+        let src_ptr = &src as *const TaskInfo;
+
+        for (idx, dst) in phy_dest.into_iter().enumerate() {
+            let len = dst.len();
+            unsafe {
+                dst.copy_from_slice(core::slice::from_raw_parts(
+                    src_ptr.wrapping_byte_add(idx * len) as *const u8,
+                    len,
+                ));
+            }
+        }
+        0
+    } else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    if let Some(curr) = current_task() {
+        curr.mmap(start, len, port)
+    } else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    if let Some(curr) = current_task() {
+        curr.unmmap(start, len)
+    } else {
+        -1
+    }
 }
 
 /// change data segment size
@@ -198,7 +232,7 @@ pub fn sys_set_priority(prio: isize) -> isize {
     }
     if let Some(task) = current_task() {
         task.set_priority(prio);
-        return 0;
+        return prio;
     }
     -1
 }

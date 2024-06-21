@@ -27,3 +27,4 @@ pub const MEMORY_END: usize = 0x88000000;
 pub const BIG_STRIDE: u64 = 100000;
 ///
 pub const DEFAULT_PASS: u64 = BIG_STRIDE / 16;
+pub const MAXVA: usize = usize::MAX;

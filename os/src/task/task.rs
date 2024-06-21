@@ -1,9 +1,12 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::{TRAP_CONTEXT_BASE, self};
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::config::MAX_SYSCALL_NUM;
+use crate::config::{self, TRAP_CONTEXT_BASE};
+use crate::mm::{MapArea, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
+use crate::syscall::process::TaskInfo;
+use crate::timer;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -73,9 +76,22 @@ pub struct TaskControlBlockInner {
     pub stride: u64,
     /// pass
     pub pass: u64,
+
+    ///
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    ///
+    pub first_rune_at: Option<usize>,
 }
 
 impl TaskControlBlockInner {
+    pub fn mmap(&mut self, map_area: MapArea) -> isize {
+        if !self.memory_set.hava_conflict(&map_area) {
+            self.memory_set.push(map_area, None);
+            return 0;
+        }
+        return -1;
+    }
+
     /// get the trap context
     pub fn get_trap_cx(&self) -> &'static mut TrapContext {
         self.trap_cx_ppn.get_mut()
@@ -125,6 +141,8 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     stride: 0,
                     pass: config::DEFAULT_PASS,
+                    first_rune_at: None,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
                 })
             },
         };
@@ -210,6 +228,8 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     stride: 0,
                     pass: config::DEFAULT_PASS,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    first_rune_at: None,
                 })
             },
         });
@@ -260,6 +280,47 @@ impl TaskControlBlock {
     pub fn set_priority(&self, prio: isize) {
         let mut inner = self.inner_exclusive_access();
         inner.pass = config::BIG_STRIDE / prio as u64;
+    }
+
+    pub fn mmap(&self, start: usize, len: usize, port: usize) -> isize {
+        println!("mmap start: {}, len: {}, port: {}", start, len, port);
+        let start_va: VirtAddr = start.into();
+        if !start_va.aligned() || start >= config::MAXVA - len {
+            return -1;
+        }
+        if let Some(pem) = MapPermission::convert_for_user(port) {
+            let (start_va, end_va) = VirtAddr::area_range(start, len);
+            let map_area = crate::mm::MapArea::new_for_mmap(start_va, end_va, pem);
+            return self.inner_exclusive_access().mmap(map_area);
+        }
+        -1
+    }
+
+    pub fn unmmap(&self, start: usize, len: usize) -> isize {
+        let (start, end) = VirtAddr::area_range(start, len);
+        let mut map_area = MapArea::new_for_unmap(start, end);
+        let mut inner = self.inner_exclusive_access();
+        if inner.memory_set.unpush(&mut map_area) {
+            0
+        }else {
+            return -1;
+        }
+    }
+
+    pub fn get_task_info(&self) -> TaskInfo {
+        let inner = self.inner_exclusive_access();
+        TaskInfo {
+            status: inner.task_status,
+            syscall_times: inner.syscall_times.clone(),
+            time: timer::get_time_ms() - inner.first_rune_at.unwrap_or(0),
+        }
+    }
+
+    pub fn set_first_run_at(&self) {
+        let mut inner = self.inner_exclusive_access();
+        if inner.first_rune_at.is_none() {
+            inner.first_rune_at = Some(crate::timer::get_time_ms());
+        }
     }
 }
 

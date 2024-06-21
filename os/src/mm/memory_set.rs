@@ -72,10 +72,28 @@ impl MemorySet {
             self.areas.remove(idx);
         }
     }
+
+    pub fn hava_conflict(&self, map_area: &MapArea) -> bool {
+        self.areas
+            .iter()
+            .find(|item| item.conflict(map_area))
+            .is_some()
+    }
+
+    pub fn unpush(&mut self, map_area: &mut MapArea) -> bool {
+        if let Some(index) = self.areas.iter().position(|item| item == map_area) {
+            self.areas.remove(index);
+            map_area.unmap(&mut self.page_table);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Add a new MapArea into this MemorySet.
     /// Assuming that there are no conflicts in the virtual address
     /// space.
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
+    pub fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
@@ -310,6 +328,26 @@ pub struct MapArea {
 }
 
 impl MapArea {
+    /// 检查 port permission
+    pub fn new_for_mmap(start_va: VirtPageNum, end_va: VirtPageNum, pem: MapPermission) -> Self {
+        MapArea {
+            vpn_range: VPNRange::new(start_va, end_va),
+            data_frames: BTreeMap::new(),
+            map_type: MapType::Framed,
+            map_perm: pem,
+        }
+    }
+
+    ///
+    pub fn new_for_unmap(start: VirtPageNum, end: VirtPageNum) -> Self {
+        MapArea {
+            vpn_range: VPNRange::new(start, end),
+            data_frames: BTreeMap::default(),
+            map_type: MapType::Framed,
+            map_perm: MapPermission::R,
+        }
+    }
+
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -400,6 +438,17 @@ impl MapArea {
             current_vpn.step();
         }
     }
+
+    pub fn conflict(&self, map_area: &Self) -> bool {
+        if self.vpn_range.get_start() >= map_area.vpn_range.get_end()
+            || self.vpn_range.get_end() <= map_area.vpn_range.get_start()
+        {
+            false
+        } else {
+            true
+        }
+    }
+
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -408,6 +457,15 @@ pub enum MapType {
     Identical,
     Framed,
 }
+
+impl PartialEq<MapArea> for MapArea {
+    fn eq(&self, other: &MapArea) -> bool {
+        self.vpn_range.get_start() == other.vpn_range.get_start()
+            && self.vpn_range.get_end() == other.vpn_range.get_end()
+    }
+}
+
+impl Eq for MapArea {}
 
 bitflags! {
     /// map permission corresponding to that in pte: `R W X U`
@@ -422,6 +480,30 @@ bitflags! {
         const U = 1 << 4;
     }
 }
+
+impl MapPermission {
+    pub fn convert_for_user(value: usize) -> Option<Self> {
+        if value & !0x7 != 0 {
+            return None;
+        }
+        if value & 0x7 == 0 {
+            return None;
+        }
+        let mut res = None;
+        if value & 0x1 != 0 {
+            res = res.map_or(Some(MapPermission::R), |item| Some(item | MapPermission::R));
+        }
+        if value & 0x2 != 0 {
+            res = res.map_or(Some(MapPermission::W), |item| Some(item | MapPermission::W));
+        }
+        if value & 0x4 != 0 {
+            res = res.map_or(Some(MapPermission::X), |item| Some(item | MapPermission::X));
+        }
+
+        return res.map_or(None, |item| Some(item | MapPermission::U));
+    }
+}
+
 
 /// remap test in kernel space
 #[allow(unused)]
