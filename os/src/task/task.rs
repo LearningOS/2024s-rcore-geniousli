@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, self};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -68,6 +68,11 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// stride
+    pub stride: u64,
+    /// pass
+    pub pass: u64,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +123,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    pass: config::DEFAULT_PASS,
                 })
             },
         };
@@ -162,11 +169,21 @@ impl TaskControlBlock {
         // **** release inner automatically
     }
 
+    /// Load a new elf to replace the original application address space and start execution
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let new = Arc::new(Self::new(elf_data));
+        new.inner.exclusive_access().parent = Some(Arc::downgrade(self));
+        let mut parent_inner = self.inner_exclusive_access();
+        parent_inner.children.push(new.clone());
+        new
+    }
+
     /// parent process fork the child process
     pub fn fork(self: &Arc<Self>) -> Arc<Self> {
         // ---- access parent PCB exclusively
         let mut parent_inner = self.inner_exclusive_access();
         // copy user space(include trap context)
+        // this already copied parent's trap cx
         let memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
@@ -191,6 +208,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    pass: config::DEFAULT_PASS,
                 })
             },
         });
@@ -198,6 +217,7 @@ impl TaskControlBlock {
         parent_inner.children.push(task_control_block.clone());
         // modify kernel_sp in trap_cx
         // **** access child PCB exclusively
+        // ?  trap_cx 是如何初始化的呢？ 如何从 parent copy过来的呢？ 在MemorySet::from_existed_user 中已经copy了。
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
         trap_cx.kernel_sp = kernel_stack_top;
         // return
@@ -235,6 +255,11 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    pub fn set_priority(&self, prio: isize) {
+        let mut inner = self.inner_exclusive_access();
+        inner.pass = config::BIG_STRIDE / prio as u64;
     }
 }
 
