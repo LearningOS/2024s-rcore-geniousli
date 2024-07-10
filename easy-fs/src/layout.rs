@@ -68,7 +68,7 @@ impl SuperBlock {
     }
 }
 /// Type of a disk inode
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum DiskInodeType {
     File,
     Directory,
@@ -85,7 +85,8 @@ pub struct DiskInode {
     pub direct: [u32; INODE_DIRECT_COUNT],
     pub indirect1: u32,
     pub indirect2: u32,
-    type_: DiskInodeType,
+    pub type_: DiskInodeType,
+    pub link_cnt: u32,
 }
 
 impl DiskInode {
@@ -97,7 +98,23 @@ impl DiskInode {
         self.indirect1 = 0;
         self.indirect2 = 0;
         self.type_ = type_;
+        self.link_cnt = 1;
     }
+
+    /// incr link cnt
+    pub fn incr_link_cnt(&mut self) {
+        self.link_cnt += 1;
+    }
+
+    /// incr link cnt
+    pub fn decr_link_cnt(&mut self) -> bool {
+        self.link_cnt -= 1;
+        self.link_cnt == 0
+    }
+    pub fn decr_size(&mut self) {
+        self.size -= 1;
+    }
+
     /// Whether this inode is a directory
     pub fn is_dir(&self) -> bool {
         self.type_ == DiskInodeType::Directory
@@ -390,6 +407,7 @@ impl DiskInode {
 }
 /// A directory entry
 #[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct DirEntry {
     name: [u8; NAME_LENGTH_LIMIT + 1],
     inode_id: u32,

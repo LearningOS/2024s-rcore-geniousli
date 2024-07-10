@@ -1,10 +1,13 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
-use crate::fs::{File, Stdin, Stdout};
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::config::MAX_SYSCALL_NUM;
+use crate::config::{self, TRAP_CONTEXT_BASE};
+use crate::fs::{File, Stat, Stdin, Stdout, FileAndIntoStats};
+use crate::mm::{MapArea, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
+use crate::syscall::process::TaskInfo;
+use crate::timer;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
@@ -64,16 +67,35 @@ pub struct TaskControlBlockInner {
 
     /// It is set when active exit or execution error occurs
     pub exit_code: i32,
-    pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
+    pub fd_table: Vec<Option<Arc<dyn FileAndIntoStats + Send + Sync>>>,
 
     /// Heap bottom
     pub heap_bottom: usize,
 
     /// Program break
     pub program_brk: usize,
+
+    /// stride
+    pub stride: u64,
+    /// pass
+    pub pass: u64,
+
+    ///
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    ///
+    pub first_run_at: Option<usize>,
 }
 
 impl TaskControlBlockInner {
+    pub fn mmap(&mut self, map_area: MapArea) -> isize {
+        if !self.memory_set.hava_conflict(&map_area) {
+            self.memory_set.push(map_area, None);
+            return 0;
+        }
+        return -1;
+    }
+
+    /// get the trap context
     pub fn get_trap_cx(&self) -> &'static mut TrapContext {
         self.trap_cx_ppn.get_mut()
     }
@@ -135,6 +157,10 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    pass: config::DEFAULT_PASS,
+                    first_run_at: None,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
                 })
             },
         };
@@ -177,11 +203,21 @@ impl TaskControlBlock {
         // **** release current PCB
     }
 
+    /// Load a new elf to replace the original application address space and start execution
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let new = Arc::new(Self::new(elf_data));
+        new.inner.exclusive_access().parent = Some(Arc::downgrade(self));
+        let mut parent_inner = self.inner_exclusive_access();
+        parent_inner.children.push(new.clone());
+        new
+    }
+
     /// parent process fork the child process
     pub fn fork(self: &Arc<TaskControlBlock>) -> Arc<TaskControlBlock> {
         // ---- hold parent PCB lock
         let mut parent_inner = self.inner_exclusive_access();
         // copy user space(include trap context)
+        // this already copied parent's trap cx
         let memory_set = MemorySet::from_existed_user(&parent_inner.memory_set);
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
@@ -192,7 +228,7 @@ impl TaskControlBlock {
         let kernel_stack = kstack_alloc();
         let kernel_stack_top = kernel_stack.get_top();
         // copy fd table
-        let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        let mut new_fd_table: Vec<Option<Arc<dyn FileAndIntoStats + Send + Sync>>> = Vec::new();
         for fd in parent_inner.fd_table.iter() {
             if let Some(file) = fd {
                 new_fd_table.push(Some(file.clone()));
@@ -216,6 +252,10 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    pass: config::DEFAULT_PASS,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    first_run_at: None,
                 })
             },
         });
@@ -223,6 +263,7 @@ impl TaskControlBlock {
         parent_inner.children.push(task_control_block.clone());
         // modify kernel_sp in trap_cx
         // **** access child PCB exclusively
+        // ?  trap_cx 是如何初始化的呢？ 如何从 parent copy过来的呢？ 在MemorySet::from_existed_user 中已经copy了。
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
         trap_cx.kernel_sp = kernel_stack_top;
         // return
@@ -259,6 +300,52 @@ impl TaskControlBlock {
             Some(old_break)
         } else {
             None
+        }
+    }
+
+    pub fn set_priority(&self, prio: isize) {
+        let mut inner = self.inner_exclusive_access();
+        inner.pass = config::BIG_STRIDE / prio as u64;
+    }
+
+    pub fn mmap(&self, start: usize, len: usize, port: usize) -> isize {
+        println!("mmap start: {}, len: {}, port: {}", start, len, port);
+        let start_va: VirtAddr = start.into();
+        if !start_va.aligned() || start >= config::MAXVA - len {
+            return -1;
+        }
+        if let Some(pem) = MapPermission::convert_for_user(port) {
+            let (start_va, end_va) = VirtAddr::area_range(start, len);
+            let map_area = crate::mm::MapArea::new_for_mmap(start_va, end_va, pem);
+            return self.inner_exclusive_access().mmap(map_area);
+        }
+        -1
+    }
+
+    pub fn unmmap(&self, start: usize, len: usize) -> isize {
+        let (start, end) = VirtAddr::area_range(start, len);
+        let mut map_area = MapArea::new_for_unmap(start, end);
+        let mut inner = self.inner_exclusive_access();
+        if inner.memory_set.unpush(&mut map_area) {
+            0
+        } else {
+            return -1;
+        }
+    }
+
+    pub fn get_task_info(&self) -> TaskInfo {
+        let inner = self.inner_exclusive_access();
+        TaskInfo {
+            status: inner.task_status,
+            syscall_times: inner.syscall_times.clone(),
+            time: timer::get_time_ms() - inner.first_run_at.unwrap_or(0),
+        }
+    }
+
+    pub fn set_first_run_at(&self) {
+        let mut inner = self.inner_exclusive_access();
+        if inner.first_run_at.is_none() {
+            inner.first_run_at = Some(crate::timer::get_time_ms());
         }
     }
 }

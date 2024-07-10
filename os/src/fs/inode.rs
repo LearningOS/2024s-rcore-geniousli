@@ -4,14 +4,15 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::File;
+
+use super::{File, FileAndIntoStats, Stat, StatMode};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use bitflags::*;
-use easy_fs::{EasyFileSystem, Inode};
+use easy_fs::{DiskInodeType, EasyFileSystem, Inode};
 use lazy_static::*;
 
 /// inode in memory
@@ -51,6 +52,11 @@ impl OSInode {
             v.extend_from_slice(&buffer[..len]);
         }
         v
+    }
+
+    ///
+    pub fn inner(&self) -> Arc<Inode> {
+        self.inner.exclusive_access().inode.clone()
     }
 }
 
@@ -121,6 +127,50 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
             }
             Arc::new(OSInode::new(readable, writable, inode))
         })
+    }
+}
+
+/// create link
+pub fn create_link(name: &str, node_id: u32) -> bool {
+    ROOT_INODE.create_with_inode(name, node_id)
+}
+
+/// remove direntry from dir
+pub fn remove_file(name: &str) -> bool {
+    if let Some(osnode) = open_file(name, OpenFlags::RDONLY) {
+        let sign = osnode.deref().inner().unlink();
+        if sign {
+            ROOT_INODE.remove_file(name);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// find file
+pub fn find_file(name: &str) -> Option<u32> {
+    ROOT_INODE.find_nodeid(name)
+}
+
+impl FileAndIntoStats for OSInode {
+    fn to_stats(&self) -> Stat {
+        let ino = self.inner().inode_id();
+        let nlink = self.inner().nlink();
+        let ftype = self.inner().node_type();
+        // DiskNode
+        let mode = match ftype {
+            DiskInodeType::Directory => StatMode::DIR,
+            DiskInodeType::File => StatMode::FILE,
+            _ => StatMode::NULL,
+        };
+        Stat {
+            dev: 0,
+            ino: ino as u64,
+            mode: mode,
+            nlink: nlink,
+            pad: [0; 7],
+        }
     }
 }
 

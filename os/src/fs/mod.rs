@@ -3,6 +3,8 @@
 mod inode;
 mod stdio;
 
+
+use easy_fs::layout::DiskInodeType;
 use crate::mm::UserBuffer;
 
 /// trait File for all file types
@@ -15,6 +17,10 @@ pub trait File: Send + Sync {
     fn read(&self, buf: UserBuffer) -> usize;
     /// write to the file from buf, return the number of bytes written
     fn write(&self, buf: UserBuffer) -> usize;
+}
+/// trait File for all file types
+pub trait FileAndIntoStats: File + Send + Sync {
+    fn to_stats(&self) -> Stat;
 }
 
 /// The stat of a inode
@@ -46,5 +52,5 @@ bitflags! {
     }
 }
 
-pub use inode::{list_apps, open_file, OSInode, OpenFlags};
+pub use inode::{list_apps, open_file, OSInode, OpenFlags, find_file, create_link, remove_file};
 pub use stdio::{Stdin, Stdout};

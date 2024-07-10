@@ -1,5 +1,7 @@
 //!Stdin & Stdout
-use super::File;
+use core::future::IntoFuture;
+
+use super::{File, FileAndIntoStats, StatMode};
 use crate::mm::UserBuffer;
 use crate::sbi::console_getchar;
 use crate::task::suspend_current_and_run_next;
@@ -9,6 +11,17 @@ pub struct Stdin;
 
 /// stdout file for putting chars to console
 pub struct Stdout;
+impl FileAndIntoStats for Stdin {
+    fn to_stats(&self) -> super::Stat {
+        super::Stat {
+            dev: 0,
+            ino: 0,
+            mode: StatMode::NULL,
+            nlink: 1,
+            pad: [0; 7],
+        }
+    }
+}
 
 impl File for Stdin {
     fn readable(&self) -> bool {
@@ -40,7 +53,17 @@ impl File for Stdin {
         panic!("Cannot write to stdin!");
     }
 }
-
+impl FileAndIntoStats for Stdout {
+    fn to_stats(&self) -> super::Stat {
+        super::Stat {
+            dev: 0,
+            ino: 1,
+            mode: StatMode::NULL,
+            nlink: 1,
+            pad: [0; 7],
+        }
+    }
+}
 impl File for Stdout {
     fn readable(&self) -> bool {
         false

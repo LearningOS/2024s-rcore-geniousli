@@ -23,6 +23,14 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
+        let min_opt: Option<(usize, &Arc<TaskControlBlock>)> = self
+            .ready_queue
+            .iter()
+            .enumerate()
+            .min_by_key(|item| item.1.inner_exclusive_access().stride);
+        if let Some((index, _)) = min_opt {
+            self.ready_queue.swap(0, index);
+        }
         self.ready_queue.pop_front()
     }
 }

@@ -17,7 +17,7 @@ mod context;
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT_BASE};
 use crate::syscall::syscall;
 use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, current_task,
 };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
@@ -116,6 +116,9 @@ pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT_BASE;
     let user_satp = current_user_token();
+    if let Some(curr) = current_task() {
+        curr.set_first_run_at();
+    }
     extern "C" {
         fn __alltraps();
         fn __restore();

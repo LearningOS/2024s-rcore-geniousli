@@ -81,6 +81,10 @@ impl EasyFileSystem {
         block_cache_sync_all();
         Arc::new(Mutex::new(efs))
     }
+    /// [ super block| inode bitmap... | inode data ... | data bitmap | data ... | ]
+    /// super block 占据一个block， xx... 标识xx 占据block 不确定
+    /// inode bitmap: Bitmap::new(1, super_block.inode_bitmap_blocks as usize)
+    /// data bitmap: Bitmap::new((1 + super_block.inode_bitmap_blocks + super_block.inode_area_blocks) as usize, super_block.data_bitmap_blocks as usize)
     /// Open a block device as a filesystem
     pub fn open(block_device: Arc<dyn BlockDevice>) -> Arc<Mutex<Self>> {
         // read SuperBlock
@@ -120,6 +124,13 @@ impl EasyFileSystem {
             block_id,
             (inode_id % inodes_per_block) as usize * inode_size,
         )
+    }
+    /// Get inode by id
+    pub fn block_id_offset_to_node_id(&self, block_id: usize, offset: usize) -> u32 {
+        let inode_size = core::mem::size_of::<DiskInode>();
+        let inodes_per_block = (BLOCK_SZ / inode_size) as u32;
+        let iinode_id: u32 = (block_id as u32 - self.inode_area_start_block) * inodes_per_block;
+        iinode_id + offset as u32
     }
     /// Get data block by id
     pub fn get_data_block_id(&self, data_block_id: u32) -> u32 {
